@@ -1,0 +1,28 @@
+<Project Sdk="Godot.NET.Sdk/4.7.0">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework Condition=" '$(GodotTargetPlatform)' == 'android' ">net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!--
+    编译优化。Godot 从编辑器或命令行运行游戏时用的是 **Debug 配置**，
+    而 Debug 下 Roslyn 默认 <Optimize>false</Optimize> —— IL 完全不做优化
+    （小方法不内联、循环不展开、局部变量不提升）。对一个每帧跑几百万次
+    数组访问和算术的模拟来说这是纯浪费，所以这里显式打开，不依赖配置名。
+
+    剩下几项是运行时的（会写进 TerritoryWar.runtimeconfig.json）：
+      · TieredCompilation=false —— 所有方法一上来就用完全优化编译，不要先跑一遍
+        慢速 tier-0。热路径上已经标了 AggressiveOptimization，这里是为了让整条
+        调用链都不经过 tier-0。代价是启动时 JIT 稍慢。
+      · InvariantGlobalization=true —— 不带 ICU，启动更快、内存更小（游戏不需要全球化）。
+      · ConcurrentGarbageCollection=true —— 后台 GC，减少掉帧尖峰。
+    没开 ServerGarbageCollection：它是为吞吐量设计的，会显著加大内存和停顿，游戏不合适。
+  -->
+  <PropertyGroup>
+    <Optimize>true</Optimize>
+    <TieredCompilation>false</TieredCompilation>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+</Project>

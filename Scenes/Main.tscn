@@ -1,0 +1,85 @@
+[gd_scene format=3 uid="uid://cgnmjohb484fg"]
+
+[ext_resource type="Script" uid="uid://dyfoh78hsc8n" path="res://Game/GameRoot.cs" id="1_root"]
+[ext_resource type="Shader" uid="uid://208ixfr7uayt" path="res://Shaders/Disc.gdshader" id="2_disc"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_marker"]
+shader = ExtResource("2_disc")
+shader_parameter/brightness = 0.9
+shader_parameter/style = -1.0
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_disc"]
+shader = ExtResource("2_disc")
+shader_parameter/brightness = 1.35
+shader_parameter/style = -1.0
+
+[sub_resource type="QuadMesh" id="QuadMesh_marker"]
+material = SubResource("ShaderMaterial_disc")
+
+[sub_resource type="MultiMesh" id="MultiMesh_markers"]
+use_colors = true
+mesh = SubResource("QuadMesh_marker")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ball"]
+shader = ExtResource("2_disc")
+shader_parameter/brightness = 1.35
+shader_parameter/style = -1.0
+
+[sub_resource type="QuadMesh" id="QuadMesh_ball"]
+material = SubResource("ShaderMaterial_disc")
+
+[sub_resource type="MultiMesh" id="MultiMesh_balls"]
+use_colors = true
+use_custom_data = true
+mesh = SubResource("QuadMesh_ball")
+
+[sub_resource type="Environment" id="Environment_glow"]
+background_mode = 3
+glow_enabled = true
+glow_levels/3 = 0.0
+glow_levels/4 = 0.0
+glow_intensity = 0.55
+glow_bloom = 0.5
+glow_hdr_threshold = 1.15
+glow_hdr_scale = 3.0
+glow_hdr_luminance_cap = 1.5
+
+[node name="Main" type="Node2D" unique_id=543049026 node_paths=PackedStringArray("MapLayer", "MarkerLayer", "BallLayer", "ViewCamera", "Hud", "GlowLayer")]
+script = ExtResource("1_root")
+MapLayer = NodePath("MapLayer")
+MarkerLayer = NodePath("MarkerLayer")
+BallLayer = NodePath("BallLayer")
+ViewCamera = NodePath("ViewCamera")
+Hud = NodePath("Hud/Status")
+GlowLayer = NodePath("Glow")
+
+[node name="MapLayer" type="Sprite2D" parent="." unique_id=138166011]
+texture_filter = 1
+
+[node name="MarkerLayer" type="MultiMeshInstance2D" parent="." unique_id=805848348]
+texture_filter = 1
+material = SubResource("ShaderMaterial_marker")
+multimesh = SubResource("MultiMesh_markers")
+
+[node name="BallLayer" type="MultiMeshInstance2D" parent="." unique_id=38387638]
+texture_filter = 1
+material = SubResource("ShaderMaterial_ball")
+multimesh = SubResource("MultiMesh_balls")
+
+[node name="ViewCamera" type="Camera2D" parent="." unique_id=1824589322]
+
+[node name="Glow" type="WorldEnvironment" parent="." unique_id=1905334943]
+environment = SubResource("Environment_glow")
+
+[node name="Hud" type="CanvasLayer" parent="." unique_id=1470239464]
+
+[node name="Status" type="Label" parent="Hud" unique_id=1314737941]
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 960.0
+offset_bottom = 150.0
+theme_override_font_sizes/font_size = 14
+text = "FPS --     存活 -/-     弹珠 0     释放 0
+染色 --ms   碰撞 --ms   其他 --ms   小球层 --ms
+中立 100.0%   每格成本 1
+滚轮缩放   WASD 平移   F 复位   R 重开   1/2/3 倍速   Space 暂停"
