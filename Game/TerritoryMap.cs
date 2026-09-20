@@ -6,22 +6,26 @@ namespace TerritoryWar.Game;
 /// <summary>
 /// 领土网格。每个格子占两个字节：owner（0 = 中立）和 strength（防御强度）。
 ///
-/// 侵蚀规则取自社区《领土战争 / Multiply or Release》的实测数值，见
-/// docs/marble-territory-war-projects.md 第 5.2 节：
+/// **实际生效的侵蚀规则只有三条**（<see cref="Attack"/> 的真值表，也是 <c>SelfCheck</c> 里
+/// 用一个小地图跑一遍断言的那张表）：
 ///
-///   打自己的格子   → 加固（让已占的地越来越难被抢）
-///   打中立格       → 直接占领
-///   攻击力 ≥ 防御  → 攻破并占领，残留一点防御（防止被第三方顺手捡走）
-///   攻击力 &lt; 防御  → 打不动，只削对方防御
+///   打中立格       → 直接占领，强度 = min(<see cref="MaxCapture"/>, power)
+///   打敌方格，power ≥ 强度 → 占领，残留强度 = min(180, power − 旧强度 + 14)（防止被第三方顺手捡走）
+///   打敌方格，power &lt; 强度 → 打不动，只削对方强度（strength −= power）
 ///
-/// 这套规则的价值：中立便宜、敌方贵，天然形成"先圈地、后血战"的节奏。
+/// ⚠ **"打自己格子 = 加固"这条规则已经删除**（历史上是对齐社区《领土战争》的规则写的，
+///   但它从来没生效过）：唯一调用方 <c>BallSwarm.Paint</c> 在调用前就把自己格跳过了，
+///   所以那个分支不可达、`ReinforceDivisor`/`MaxReinforce` 是死常量。
+///   于是强度的**唯一来源就是"占领时残留"**，即"当初是谁用什么强度占下它"。
+///   要重新启用加固：在 <c>Paint</c> 的 `continue` 之前对自己格调一次加固，
+///   并连同 `ReinforceDivisor`（现为 power/8，会瞬间顶到上限，需要重调）与整套节奏一起验。
+///
+/// "先圈地、后血战"的节奏仍然成立：中立便宜、敌方贵。
 /// </summary>
 public sealed class TerritoryMap
 {
     public const byte Neutral = 0;
 
-    const int ReinforceDivisor = 8;   // 打自己格子时的防御增量 = power / 8
-    const int MaxReinforce = 210;     // 防御上限（防无限囤积）
     const int MaxCapture = 180;
     const int CaptureCarry = 14;      // 攻破后残留的防御
 
@@ -69,7 +73,6 @@ public sealed class TerritoryMap
 
     /// <summary>用 power 点攻击力打这一格。返回是否易主。</summary>
     // 全项目调用最频繁的方法（每步每颗球几十次），跳过分层编译直接出优化代码。
-    // 这个标注是从商业版学来的 —— 那边热路径上挂了十几处。
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public bool Attack(int x, int y, byte team, int power)
     {
@@ -78,8 +81,11 @@ public sealed class TerritoryMap
 
         if (owner == team)
         {
-            int reinforced = _strength[i] + Math.Max(1, power / ReinforceDivisor);
-            _strength[i] = (byte)Math.Min(MaxReinforce, reinforced);
+            // 自己的格子：**什么都不做**。
+            // ⚠ 这里曾经是"加固（+power/8，上限 210）"，但唯一调用方 BallSwarm.Paint 在调用前
+            //   就把自己格 continue 掉了 —— 那个分支从来没被执行过（详见类注释）。
+            //   保留这个提前返回是必要的：否则自己的格子会走进下面"攻破"那一段，
+            //   把强度按"被攻占"的公式重算一遍，变成一种静默的错行为。
             return false;
         }
 
@@ -109,19 +115,7 @@ public sealed class TerritoryMap
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte OwnerAt(int x, int y) => _owner[y * Width + x];
 
-    /// <summary>某支势力出局：它的地盘全部变回中立。</summary>
-    public void ReleaseTeam(byte team)
-    {
-        _cellsByTeam[Neutral] += _cellsByTeam[team];
-        _cellsByTeam[team] = 0;
-
-        for (int i = 0; i < _owner.Length; i++)
-        {
-            if (_owner[i] == team)
-            {
-                _owner[i] = Neutral;
-                _strength[i] = 0;
-            }
-        }
-    }
+    /// <summary>读某一格的防御强度。给启动自检的规则真值表用（游戏逻辑自己走 <see cref="Attack"/>）。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public byte StrengthAt(int x, int y) => _strength[y * Width + x];
 }

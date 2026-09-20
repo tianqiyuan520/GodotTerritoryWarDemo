@@ -1,21 +1,23 @@
 using System;
 using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
 
 namespace TerritoryWar.Game;
 
 /// <summary>
 /// 一群弹珠。每颗有自己的<b>能量</b>，能量同时决定三件事：
 ///
-///   · 半径   —— 能量越大球越大（半径 ∝ √能量），抢地盘更快
-///   · 攻击力 —— 能量越大越容易打穿敌人的防御
-///   · 血量   —— 和别的球相撞时，能量小的直接消失，大的损失等量能量
+///   · 半径   —— **两段式**：小球恒定半径；大球在 50~100 之间随 √能量增长（见 <see cref="RadiusForEnergy"/>）
+///   · 攻击力 —— 能量 ÷ 200（靠它打穿领土防御）
+///   · 生命   —— 大球的生命池**就是能量**；小球另有一个寿命池（时间 + 敌方格，见 <see cref="Step"/>）
 ///
-/// 而抢地盘本身要花能量。于是"扩张"和"存活"天然互相牵制 —— 这正是这个题材
+/// 而抢地盘本身要花代价。于是"扩张"和"存活"天然互相牵制 —— 这正是这个题材
 /// 最核心的平衡来源，不需要额外设计什么惩罚机制。
 ///
-/// 数组用"紧凑排列 + 死亡标记 + 收尸"的方式管理：活跃弹珠永远在 0..Count-1，
-/// 不留空洞，遍历时不做存活判断。
+/// **只有大球参与碰撞**：小球互相穿透、也穿透大球；两颗敌对的大球撞上则弹开、各掉一份能量。
+///
+/// 数组用"紧凑排列 + 死亡标记 + 收尸"管理。⚠ 不变式是「**收尸之后** 0..Count-1 里没有死球」，
+/// 而**不是**"数组里永远没有死球"：<see cref="KillTeam"/> 是外部路径，标记与收尸之间隔着一个
+/// 帧边界。所以**每个遍历弹珠的循环都必须自己查 `_dead[i]`**（见 <see cref="Step"/> 开头）。
 /// </summary>
 public sealed class BallSwarm
 {
@@ -103,18 +105,12 @@ public sealed class BallSwarm
     /// <summary>刚晋级时的大球半径。也是 GameRoot 判定"按大球画"的阈值来源。</summary>
     public const float BigMinRadius = 50f;
 
-    /// <summary>能量封顶时的大球半径。</summary>
-    const float BigMaxRadius = 100f;
-
     /// <summary>
-    /// 普通弹珠的半径上限。
-    /// 必须 ≥ <see cref="BigMaxRadius"/>，否则大球会被削平。
-    ///
-    /// 它同时是碰撞网格边长的来源，但网格**不再**跟着它走 —— 取 100 的话格子边长 100，
-    /// 1000×1000 只切出 10×10 格，哈希太粗。网格边长改成按 <see cref="BigMinRadius"/> 取，
-    /// 代价是两颗都很大的球可能漏判一次碰撞（大球本来就少，这个取舍划算）。
+    /// 能量封顶时的大球半径 —— 也就是**大球画出来的最大半径**。
+    /// ⚠ 涂色盘的上限 <see cref="Disk.MaxRadius"/> 就是从这个值来的：
+    ///   两者必须一致，否则球压过去之后，亮环以内会留一圈没被涂掉的地。
     /// </summary>
-    public const int MaxRadius = 100;
+    public const float BigMaxRadius = 100f;
 
     /// <summary>
     /// 航向抖动速度（弧度/秒）。这个值决定了弹珠是"滚"还是"飘"。
@@ -134,28 +130,36 @@ public sealed class BallSwarm
     const float TurnRate = 0.15f;
 
     /// <summary>能量低于这个值就消失（太弱了，留着也没用）。</summary>
-    public const float MinEnergy = 100f;
+    const float MinEnergy = 100f;
 
     /// <summary>
-    /// 能量上限。没有它会出现"滚雪球球"：能量最高的那颗被反复喂，实测能涨到一千万能量 ——
-    /// 它半径顶到上限、把周围全涂成自己的，从此也死不掉。加上封顶，这种现象从根上不会发生。
+    /// 半径曲线的**上端点** —— 注意它已经不是"能量上限"了。
     ///
-    /// 80000 对应半径约 20（除数 14），也就是地图宽度的 4%。调大它是"让大球更大"的
-    /// 正确杠杆 —— 调 RadiusDivisor 会把小球一起放大，而这个只管天花板。
+    /// 半径映射是"√能量在 [√<see cref="BigBallEnergy"/>, √<see cref="MaxEnergy"/>] 上线性插值"，
+    /// 所以这个值决定的是"多少能量才画到最大半径 <see cref="BigMaxRadius"/>=100"。
+    ///
+    /// ⚠ 现在**没有任何回能途径**（大球能量只减不增、小球出膛就冻结），实测能到的最高能量
+    ///   就是 <c>GameRoot.BigBallEnergyMax</c>（默认 30000 ⇒ 半径 75、远远够不到 100）。
+    ///   所以"想让大球更大"应该调 <c>BigBallEnergyMax</c>（多给能量），或者调这里
+    ///   （把曲线压扁、同样能量画得更大）—— 但后者会把**所有**大球的尺寸一起放大。
     /// </summary>
     public const float MaxEnergy = 80000f;
 
-    public readonly int Capacity;
+    /// <summary>缓冲容量（= <c>GameRoot.MaxBalls</c>）；超过它 <see cref="Spawn"/> 会拒绝，外部不必读。</summary>
+    readonly int _capacity;
+
     public int Count;
 
+    /// <summary>活跃弹珠的数据列，永远紧凑排在 <c>0..Count-1</c>（死掉的由 <see cref="Compact"/> 收尸）。</summary>
     public readonly float[] X;
     public readonly float[] Y;
     public readonly float[] Energy;
     public readonly byte[] Team;
-    public readonly bool[] Dead;
+
+    /// <summary>本步被标记死亡的球（<see cref="Compact"/> 之后就不存在了，所以外部不必读）。</summary>
+    readonly bool[] _dead;
 
     readonly float[] _heading;
-    readonly float[] _radius;
     readonly float[] _life;      // 小球剩余寿命（大球不读它，只在降级时被重新赋值）
     readonly float[] _clashCooldown;   // 大球碰撞后的冷却，见 ClashCooldown
     readonly int[] _bigIndices;  // 碰撞枚举用的"大球下标"暂存区（复用，不每帧分配）
@@ -163,14 +167,13 @@ public sealed class BallSwarm
 
     public BallSwarm(int capacity, int seed)
     {
-        Capacity = capacity;
+        _capacity = capacity;
         X = new float[capacity];
         Y = new float[capacity];
         Energy = new float[capacity];
         Team = new byte[capacity];
-        Dead = new bool[capacity];
+        _dead = new bool[capacity];
         _heading = new float[capacity];
-        _radius = new float[capacity];
         _life = new float[capacity];
         _clashCooldown = new float[capacity];
         _bigIndices = new int[capacity];
@@ -179,19 +182,28 @@ public sealed class BallSwarm
 
     // 下面这几个是每步每颗球都要调的叶子方法，标上内联 / 跳过分层编译。
     // 标注方式抄自商业版（那边热路径上挂了十几处 MethodImpl）。
+    /// <summary>
+    /// 当前半径 —— **由能量现算**，不缓存。
+    ///
+    /// ⚠ 这里曾经缓存成一列 `_radius[]`、只在 Step 每颗球处理完时刷新一次。问题不在性能
+    ///   （现算只是一次比较，大球多一次开方），而在**正确性**：`ResolveCollisions` 与
+    ///   `GameRoot.AttackBases` 都会在 Step 之外改能量，缓存就会滞后 —— 表现为"被撞回小球档的
+    ///   大球还以一帧的大尺寸出现、基地判定半径也大一帧"。派生量就现算，没有第二处需要同步。
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float RadiusOf(int i) => _radius[i];
+    public float RadiusOf(int i) => RadiusForEnergy(Energy[i]);
 
     /// <summary>当前航向（弧度）。拖尾残影要沿运动反方向摆，所以要暴露出去。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float HeadingOf(int i) => _heading[i];
 
+    /// <summary>攻击力 = 能量 / <see cref="EnergyPerPower"/>，夹在 1..255。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int PowerOf(int i) => Math.Clamp((int)(Energy[i] / EnergyPerPower), 1, 255);
+    int PowerOf(int i) => Math.Clamp((int)(Energy[i] / EnergyPerPower), 1, 255);
 
     public bool Spawn(float x, float y, float energy, byte team, float heading)
     {
-        if (Count >= Capacity)
+        if (Count >= _capacity)
         {
             return false;
         }
@@ -201,16 +213,19 @@ public sealed class BallSwarm
         Y[i] = y;
         Energy[i] = energy;
         Team[i] = team;
-        Dead[i] = false;
+        _dead[i] = false;
         _heading[i] = heading;
-        _radius[i] = RadiusFor(energy);
         _life[i] = SmallBallLifetime;
         _clashCooldown[i] = 0f;
         return true;
     }
 
+    /// <summary>
+    /// 能量 → 半径。**这是"半径"的唯一来源**（视觉与涂色盘都走它），所以它也是
+    /// "小球 / 大球"分界线的唯一来源（<see cref="BigBallEnergy"/> ⇔ <see cref="BigMinRadius"/>）。
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static float RadiusFor(float energy)
+    public static float RadiusForEnergy(float energy)
     {
         // 小球：恒定大小，不随能量变化
         if (energy < BigBallEnergy)
@@ -248,6 +263,16 @@ public sealed class BallSwarm
     {
         for (int i = 0; i < Count; i++)
         {
+            // ⚠ 不变式守卫：`_dead` 是"收尸前"的软标记，而置位不只发生在 Step 里
+            //   （KillTeam 是外部路径，一局里在 AttackBases 结算时触发）。
+            //   收尸（Compact）一帧只跑一次，所以**任何遍历弹珠的地方都不能假设"活着的才在数组里"** ——
+            //   这里不查的话，被淘汰那家的球会在被标记后的下一步继续移动、涂色，
+            //   把刚分给幸存者的地重新涂成已出局势力的颜色（地图上的"鬼影领地"）。
+            if (_dead[i])
+            {
+                continue;
+            }
+
             bool isBig = Energy[i] >= BigBallEnergy;
 
             // 碰撞冷却（只有大球会被设置，但判断很便宜，直接对所有球走一遍）
@@ -293,7 +318,9 @@ public sealed class BallSwarm
                 // 能量磨穿就跌回小球档。每步只对**新盖到**的格子收钱
                 // （上一步染成自己的格子会被跳过），所以是"按推进速度烧钱"而不是
                 // "按盘子面积烧钱"：盘子 48、每步走 1.5 格 ⇒ 每步约 2×48×1.5 ≈ 144 格。
-                Paint(i, map, cellCost, 0f);
+                // ⚠ 池子（能量 / 生命）由**这里**决定并传进去 —— 见 Paint 的注释：
+                //   让 Paint 自己再判一次"是不是大球"会和这一步的维持费打架。
+                Paint(i, map, cellCost, 0f, usesEnergyPool: true);
 
                 // 能量掉回小球档（被敌境磨穿了）：降级成小球并重新给一段寿命，
                 // 否则它会带着"大球的倒计时"立刻消失。
@@ -301,22 +328,20 @@ public sealed class BallSwarm
             }
             else
             {
-                // 小球：能量冻结，但**踩敌境要花生命**（cellCost 走不到，改走 cellLifeCost）。
-                Paint(i, map, 0, SmallBallCellLifeCost);
+                // 小球：能量不随时间变，但**踩敌境要花生命**（能量那份是 0）。
+                Paint(i, map, 0, SmallBallCellLifeCost, usesEnergyPool: false);
                 _life[i] -= dt;
                 if (_life[i] <= 0f)
                 {
-                    Dead[i] = true;
+                    _dead[i] = true;
                 }
             }
-
-            _radius[i] = RadiusFor(Energy[i]);
         }
     }
 
     void BounceOffWalls(int i, int width, int height)
     {
-        float r = _radius[i];
+        float r = RadiusOf(i);
 
         if (X[i] < r) { X[i] = r; _heading[i] = MathF.PI - _heading[i]; }
         else if (X[i] > width - r) { X[i] = width - r; _heading[i] = MathF.PI - _heading[i]; }
@@ -325,58 +350,84 @@ public sealed class BallSwarm
         else if (Y[i] > height - r) { Y[i] = height - r; _heading[i] = -_heading[i]; }
     }
 
+    /// <summary>
+    /// 涂一遍圆盘。半径取**当前能量**映射出来的半径（与画出来的圆同一个值，见 <see cref="Disk"/>）。
+    ///
+    /// <paramref name="usesEnergyPool"/> 决定"这一格记在哪个池子上"：大球扣能量、小球扣生命。
+    /// ⚠ **这个判定必须由调用方（<see cref="Step"/>）给出，不能在这里重算**：
+    ///   大球每步先扣维持费，若这里用扣完的能量再判一次，就会出现"Step 认为是大球（走能量分支）、
+    ///   Paint 认为是小球（改扣生命）"的错账 —— 盘内敌方格超过 640 时那一步的生命会被直接扣光，
+    ///   于是"该扣能量"的大球在敌境里凭空暴毙（实测踩过）。
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    void Paint(int i, TerritoryMap map, int cellCost, float cellLifeCost)
+    void Paint(int i, TerritoryMap map, int cellCost, float cellLifeCost, bool usesEnergyPool)
     {
         int cx = (int)X[i];
         int cy = (int)Y[i];
         byte team = Team[i];
         int power = PowerOf(i);
-        var offsets = Disk.Get((int)_radius[i]);
+        Disk.Row[] rows = Disk.RowsFor((int)RadiusOf(i));
 
-        // 一次算好，整趟都用它：能量在循环里会被扣，扣到中途跨过 BigBallEnergy 的话，
-        // 逐格重新判断就会出现"前半程扣能量、后半程扣生命"这种一脚踩两只船的账。
-        bool isBig = Energy[i] >= BigBallEnergy;
-
-        for (int k = 0; k < offsets.Length; k++)
+        // 逐行扫：一行内 x 是连续的，所以每行只需要把横向那一段夹进地图，
+        // 顺序与"逐格 dy 从小到大、每行 dx 从小到大"完全一致。
+        for (int k = 0; k < rows.Length; k++)
         {
-            int x = cx + offsets[k].Dx;
-            int y = cy + offsets[k].Dy;
-
-            // (uint) 转换把两次范围检查合成一次，负数会变成巨大的无符号数而被排除
-            if ((uint)x >= (uint)map.Width || (uint)y >= (uint)map.Height)
+            Disk.Row row = rows[k];
+            int y = cy + row.Dy;
+            if ((uint)y >= (uint)map.Height)
             {
                 continue;
             }
 
-            if (map.Owner[y * map.Width + x] == team)
+            int x0 = cx + row.XMin;
+            int x1 = cx + row.XMax;
+            if (x0 < 0)
             {
-                continue;   // 自己的地不花钱（但会顺手加固，见 TerritoryMap.Attack）
+                x0 = 0;
             }
 
-            // 涂一格敌方格要付代价 —— 大球付能量，小球付生命。池子不同，规则是同一条。
-            // 已经染成自己的格子在下一步会被上面那句跳过，所以这里天然就是"每格只收一次"，
-            // 只有**染不动**的格子（对方强度高于攻击力）才会每步反复收钱 —— 那是"撞墙被磨死"。
-            if (isBig)
+            if (x1 >= map.Width)
             {
-                Energy[i] -= cellCost;
-                if (Energy[i] < MinEnergy)
-                {
-                    Energy[i] = 0f;
-                    return;     // 能量耗尽，这一颗打到头了
-                }
-            }
-            else
-            {
-                _life[i] -= cellLifeCost;
-                if (_life[i] <= 0f)
-                {
-                    Dead[i] = true;
-                    return;     // 生命耗尽，死在敌境里
-                }
+                x1 = map.Width - 1;
             }
 
-            map.Attack(x, y, team, power);
+            if (x0 > x1)
+            {
+                continue;
+            }
+
+            int rowStart = y * map.Width;
+            for (int x = x0; x <= x1; x++)
+            {
+                if (map.Owner[rowStart + x] == team)
+                {
+                    continue;   // 自己的地不花钱
+                }
+
+                // 涂一格敌方格要付代价 —— 大球付能量，小球付生命。池子不同，规则是同一条。
+                // 已经染成自己的格子在下一步会被上面那句跳过，所以这里天然就是"每格只收一次"，
+                // 只有**染不动**的格子（对方强度高于攻击力）才会每步反复收钱 —— 那是"撞墙被磨死"。
+                if (usesEnergyPool)
+                {
+                    Energy[i] -= cellCost;
+                    if (Energy[i] < MinEnergy)
+                    {
+                        Energy[i] = 0f;
+                        return;     // 能量耗尽，这一颗打到头了
+                    }
+                }
+                else
+                {
+                    _life[i] -= cellLifeCost;
+                    if (_life[i] <= 0f)
+                    {
+                        _dead[i] = true;
+                        return;     // 生命耗尽，死在敌境里
+                    }
+                }
+
+                map.Attack(x, y, team, power);
+            }
         }
     }
 
@@ -386,16 +437,16 @@ public sealed class BallSwarm
     /// </summary>
     public bool BigBallBlockedAt(float x, float y, float energy)
     {
-        float r = RadiusFor(energy);
+        float r = RadiusForEnergy(energy);
 
         for (int i = 0; i < Count; i++)
         {
-            if (Dead[i] || Energy[i] < BigBallEnergy)
+            if (_dead[i] || Energy[i] < BigBallEnergy)
             {
                 continue;   // 小球不参与碰撞，压上去也没关系
             }
 
-            float reach = r + _radius[i];
+            float reach = r + RadiusOf(i);
             float dx = x - X[i];
             float dy = y - Y[i];
             if (dx * dx + dy * dy < reach * reach)
@@ -434,7 +485,7 @@ public sealed class BallSwarm
         int bigCount = 0;
         for (int i = 0; i < Count; i++)
         {
-            if (!Dead[i] && Energy[i] >= BigBallEnergy)
+            if (!_dead[i] && Energy[i] >= BigBallEnergy)
             {
                 _bigIndices[bigCount++] = i;
             }
@@ -454,13 +505,13 @@ public sealed class BallSwarm
                 int b = _bigIndices[bi];
 
                 // 前面的碰撞可能已经把它们中的一颗降级/销毁了
-                if (Dead[a] || Dead[b]
+                if (_dead[a] || _dead[b]
                     || Energy[a] < BigBallEnergy || Energy[b] < BigBallEnergy)
                 {
                     continue;
                 }
 
-                float reach = _radius[a] + _radius[b];
+                float reach = RadiusOf(a) + RadiusOf(b);
                 float dx = X[a] - X[b];
                 float dy = Y[a] - Y[b];
                 float distSq = dx * dx + dy * dy;
@@ -555,7 +606,7 @@ public sealed class BallSwarm
     {
         if (Energy[i] < MinEnergy)
         {
-            Dead[i] = true;
+            _dead[i] = true;
         }
         else if (Energy[i] < BigBallEnergy)
         {
@@ -569,7 +620,7 @@ public sealed class BallSwarm
         int i = 0;
         while (i < Count)
         {
-            if (!Dead[i])
+            if (!_dead[i])
             {
                 i++;
                 continue;
@@ -582,24 +633,64 @@ public sealed class BallSwarm
                 Y[i] = Y[last];
                 Energy[i] = Energy[last];
                 Team[i] = Team[last];
-                Dead[i] = Dead[last];
+                _dead[i] = _dead[last];
                 _heading[i] = _heading[last];
-                _radius[i] = _radius[last];
                 _life[i] = _life[last];
                 _clashCooldown[i] = _clashCooldown[last];
             }
         }
     }
 
-    /// <summary>清掉某支势力的所有弹珠（它出局时用）。</summary>
+    /// <summary>
+    /// 这颗球是否已被标记死亡（还没被 <see cref="Compact"/> 收尸）。
+    ///
+    /// ⚠ 这是给"遍历弹珠的其他系统"用的不变式查询：`KillTeam` 是外部路径、标记与收尸之间
+    ///   隔着一个帧边界，所以**任何**遍历弹珠的循环都必须先查它，不能假设数组里只有活球。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsDead(int i) => _dead[i];
+
+    /// <summary>清掉某支势力的所有弹珠（它出局时用）—— **立刻收尸**，而不是只打死亡标记。
+    ///
+    /// ⚠ 只打标记的话，这些球在下一次 <see cref="Step"/> 里还会再走一步（移动 + 涂色），
+    ///   把刚分给幸存者的地重新涂成已出局势力的颜色 —— 地图上会出现"鬼影领地"，
+    ///   而且该队的 <c>CellsByTeam</c> 会重新变成非 0（面板上"已出局"却还有格数）。
+    ///
+    /// ⚠ 本方法会**改变数组顺序**（收尸用的是"末尾顶掉"），所以不能在遍历弹珠的循环中途调用 ——
+    ///   `GameRoot.AttackBases` 因此把出局清算推迟到那一趟循环结束之后。
+    /// </summary>
     public void KillTeam(byte team)
     {
         for (int i = 0; i < Count; i++)
         {
             if (Team[i] == team)
             {
-                Dead[i] = true;
+                _dead[i] = true;
             }
+        }
+
+        Compact();
+    }
+
+    /// <summary>
+    /// 从外部扣一颗球的能量（基地伤害走这里）。
+    ///
+    /// ⚠ **能量只有这一条外部写入口**：能量的跨档规则（跌破 <see cref="BigBallEnergy"/> 降级、
+    ///   跌破 <see cref="MinEnergy"/> 销毁）只由 <see cref="DowngradeOrKill"/> 维护，
+    ///   外部直接写 <c>Energy[i]</c> 会绕过它 —— 曾经就是这样漏出一条"被基地磨到 0 能量、
+    ///   却因为是 0 而被当成小球、靠出生时那 16 秒寿命继续活着"的球。
+    ///
+    /// ⚠ 收尾只对**原本是大球**的球做：小球按规则就该待在小球档，对它跑一次收尾
+    ///   会把它的寿命重置成满格（变成永动机）。
+    /// </summary>
+    public void ApplyDamage(int i, float amount)
+    {
+        bool wasBig = Energy[i] >= BigBallEnergy;
+        Energy[i] = MathF.Max(0f, Energy[i] - amount);
+
+        if (wasBig)
+        {
+            DowngradeOrKill(i);
         }
     }
 }

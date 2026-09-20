@@ -1,3 +1,9 @@
+# ⚠ 这份结果是**打开 TerritoryWar.csproj 里的 `Optimize=true` 之前**测的（见 docs/tuning-log.md §1）：
+#   那时用的是 Debug 配置（Roslyn 不做 IL 优化），数字整体偏低约 2.5 倍，只适合当"相对量级"看，
+#   **不要**当成当前的绝对性能。docs/research-territory-war.md §5.8 引用的就是这一份。
+#   要重新测（会写到 user://bench_results.txt，再手动覆盖本文件）：
+#     Godot_v4.7-stable_mono_win64_console.exe --path . res://bench/Benchmark.tscn
+# ─────────────────────────────────────────────────────────────────────────────
 Godot 4.7-stable (official) | 适配器 NVIDIA GeForce RTX 4060 Laptop GPU | 逻辑核心 16
 网格 1000x1000 = 1,000,000 格 | chunk 64 | 实体 10,000
 ----------------------------------------------------------------------------------------------

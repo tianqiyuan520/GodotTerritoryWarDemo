@@ -1,4 +1,29 @@
 root = true
 
+# ─────────────────────────────────────────────────────────────
+# 全局：UTF-8 + LF + 行尾不留空白
+#   与 .gitattributes 的 `* text=auto eol=lf` 对齐。
+#   项目里的中文注释很多，编码写死 utf-8 免得编辑器按系统区域猜成 GBK。
+# ─────────────────────────────────────────────────────────────
 [*]
 charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# ─────────────────────────────────────────────────────────────
+# C#
+#   风格上真正被"强制"的只有缩进；其余用 suggestion，别让编辑器自动
+#   重排既有的注释块（这个项目的注释是有意排过版的）。
+#   ⚠ 刻意不碰 *.tscn / *.gdshader：Godot 那两个格式用 tab。
+# ─────────────────────────────────────────────────────────────
+[*.cs]
+indent_style = space
+indent_size = 4
+csharp_new_line_before_open_brace = all
+csharp_style_namespace_declarations = file_scoped:suggestion
+dotnet_sort_system_directives_first = true
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+csharp_prefer_braces = true:suggestion

@@ -33,6 +33,19 @@ public sealed class Team
     /// <summary>距离下一次"蓄力射击"（打大球）还剩多久。</summary>
     public float BigShotTimer;
 
+    /// <summary>
+    /// 下一轮齐射的球数倍率（左侧钉板的"×2/×4/×8"与转盘门穿过时会累乘，打出后清零）。
+    /// 它只影响**下一轮**齐射，所以是"抽到就赚一发"，而不是永久增益。
+    /// </summary>
+    public int PendingMultiplier = 1;
+
+    /// <summary>
+    /// 基地护盾剩余时间（秒）。落在钉板"护盾"格上时被点亮，期间受到的伤害大幅衰减。
+    /// 这是底排 6 个功能格里唯一一个"防守向"的效果 —— 其余几格都是往外打（对应参考作品的
+    /// 扇形/烟花/弹药/护盾/大球/弹幕）。
+    /// </summary>
+    public float ShieldTimer;
+
 
     public Team(byte id, float baseX, float baseY, float baseHealth, float baseAngle, float swingPhase, float fireTimer, float bigShotTimer)
     {

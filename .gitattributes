@@ -1,0 +1,15 @@
+# 行尾统一按 LF 入库，**工作区也用 LF**。
+#
+# 为什么需要它：Windows 上 `core.autocrlf` 默认是 true —— 它会把仓库里的 LF
+# 在检出时换成 CRLF，于是每次 `git add` 都刷一屏
+# "LF will be replaced by CRLF the next time Git touches it" 警告，
+# 而且一旦 git 真的重写过工作区，就会和"按 LF 写文件的工具/编辑器"来回打架。
+# 显式钉死 eol=lf 之后，仓库与工作区一致，警告也消失。
+#
+# 说明：Godot 的 .tscn / .gdshader / *.import / *.uid 用 LF 完全正常。
+* text=auto eol=lf
+
+# 二进制资产显式声明（text=auto 一般能自己识别，这里钉死免得哪天被当成文本做行尾转换）
+*.mp3 binary
+*.ogg binary
+*.png binary
